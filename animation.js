@@ -4,6 +4,10 @@
  const cards=[{image:null,file:'',zoom:100,x:0,y:0,borderColor:'#cbbbea',border:3,size:85}];
  const controls={animZoom:'zoom',animX:'x',animY:'y',animBorderColor:'borderColor',animBorder:'border',animSize:'size'};
  const stringKeys=['borderColor'];
+ // Keep the chosen frame rate during size fitting.
+ for(const [value,label] of [[20,'20 fps · 권장'],[25,'25 fps · 더 부드럽게']]){
+ const select=el('animFPS');if(![...select.options].some(o=>Number(o.value)===value))select.add(new Option(label,String(value)));
+ }el('animFPS').value='20';el('animFPS').title='GIF 저장 시 선택한 fps를 유지하고, 2MB 미만으로 색상 수와 해상도를 조절해요.';
  const status=s=>el('animStatus').textContent=s;
  function sync(){const c=cards[0];for(const [id,key]of Object.entries(controls))el(id).value=c[key];for(const id of ['animZoom','animBorder','animSize'])el(id+'Value').textContent=el(id).value+'%';el('animFileName').textContent=c.file||'동영상을 넣으면 원 안에서 재생돼요.';}
  function layout(i){return {x:aw/count*(i+.5),y:ah/2,d:Math.min(aw/count,ah)*cards[i].size/100};}
@@ -37,23 +41,27 @@
  await seekPending;if(ProfileFX.settings.effect!=='none')await ProfileFX.ready();
  if(kind==='png'){await seekVideo(sourceTime(clock));scene(out,clock);const blob=await toBlob(out);if(blob.size>=10000000)throw Error('10MB를 넘었어요. 크기를 줄여주세요.');download(blob,'circle-profile.png');status(`현재 장면 PNG 저장 · ${(blob.size/1000).toFixed(1)}KB`);return;}
  const duration=ProfileFX.total(length),chosenFPS=Number(el('animFPS').value),c=out.getContext('2d',{willReadFrequently:true});
- const attempts=kind==='apng'?[{fps:chosenFPS,colors:255}]:[{fps:chosenFPS,colors:255},{fps:Math.min(chosenFPS,10),colors:191},{fps:Math.min(chosenFPS,7),colors:127},{fps:Math.min(chosenFPS,5),colors:95}];
+ const attempts=kind==='apng'?[{fps:chosenFPS,colors:255,scale:1}]:
+ [1,.85,.7,.55,.4].flatMap(scale=>[255,127,63].map(colors=>({fps:chosenFPS,colors,scale})));
+ const packed=document.createElement('canvas'),pc=packed.getContext('2d',{willReadFrequently:true});
  let blob=null,used=null;
  for(let attempt=0;attempt<attempts.length;attempt++){
  const opts=attempts[attempt],frames=Math.max(1,Math.ceil(opts.fps*duration));
  if(aw*ah*frames>50000000)throw Error('처리할 영상이 너무 커요. 420×420px로 맞추거나 사용 길이를 줄여주세요.');
- const encoder=kind==='apng'?new LosslessAPNG(frames):new LoopGIF(aw,ah,opts.colors);
+ const w=Math.max(1,Math.round(aw*opts.scale)),h=Math.max(1,Math.round(ah*opts.scale));
+ packed.width=w;packed.height=h;pc.imageSmoothingEnabled=true;pc.imageSmoothingQuality='high';
+ const encoder=kind==='apng'?new LosslessAPNG(frames):new LoopGIF(w,h,opts.colors);
  for(let frame=0;frame<frames;frame++){
  const t=frame/opts.fps;await seekVideo(sourceTime(t));scene(out,t);
  const delay=Math.max(1,Math.round(Math.min(duration,(frame+1)/opts.fps)*100)-Math.round(frame*100/opts.fps));
- if(kind==='apng')await encoder.addFrame(out,delay);else encoder.addFrame(c.getImageData(0,0,aw,ah).data,delay);
- status(`${kind==='apng'?'APNG':'GIF'} 만드는 중 · ${attempt+1}차 · ${Math.round((frame+1)/frames*100)}%`);await new Promise(r=>setTimeout(r,0));
+ if(kind==='apng')await encoder.addFrame(out,delay);else {pc.clearRect(0,0,w,h);pc.drawImage(out,0,0,w,h);encoder.addFrame(pc.getImageData(0,0,w,h).data,delay);}
+ status(`${kind==='apng'?'APNG':'GIF'} 만드는 중 · ${chosenFPS}fps 유지 · ${w}×${h}px · ${attempt+1}차 · ${Math.round((frame+1)/frames*100)}%`);await new Promise(r=>setTimeout(r,0));
  }
- blob=encoder.finish();used=opts;if(kind==='apng'||blob.size<2000000)break;
+ blob=encoder.finish();used={...opts,w,h};if(kind==='apng'||blob.size<2000000)break;
  }
- if(kind==='gif'&&blob.size>=2000000)throw Error('2MB 미만으로 맞추지 못했어요. 영상 길이나 닉네임 표시 시간을 줄여 다시 저장해주세요.');
+ if(kind==='gif'&&blob.size>=2000000)throw Error('선택한 fps를 유지하며 2MB 미만으로 맞추지 못했어요. 사용 길이나 닉네임 표시 시간을 줄여주세요. 프레임은 자동으로 낮추지 않아요.');
  download(blob,kind==='apng'?'circle-video.apng':'circle-video.gif');
- status(`${kind==='apng'?'APNG 보관용':'GIF'} 저장 · ${(blob.size/1000000).toFixed(2)}MB · ${aw}×${ah}px · ${used.fps}fps${kind==='apng'?' (SOOP 업로드는 GIF를 사용해주세요.)':''}`);
+ status(`${kind==='apng'?'APNG 보관용':'GIF'} 저장 · ${(blob.size/1000000).toFixed(2)}MB · ${used.w}×${used.h}px · ${used.fps}fps 유지${kind==='apng'?' (SOOP 업로드는 GIF를 사용해주세요.)':''}`);
  }catch(e){status(e.message||'저장하지 못했어요. 다시 시도해주세요.');}
  finally{out.width=out.height=0;exporting=false;nodes.forEach((n,i)=>n.disabled=disabled[i]);render(clock);}
  }
